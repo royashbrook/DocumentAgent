@@ -71,8 +71,9 @@ PowerShell's location to the settings folder, not the process working directory.
 - The source groups the rows and skips any group with a receipt in `receipts/<key>.json`. Nothing
   ready logs `No data available`.
 - With `dry_run`, nothing is fetched and the log names the groups that would go.
-- Otherwise each group's files are fetched into `out/`, delivered, then removed, and the receipt
-  is written. `max_sends` caps the groups per run (0 or absent for none).
+- Otherwise each document is fetched once into `out/<document_id>/`, even when it goes out in
+  several groups, then each group is delivered and gets its receipt. The files are removed when the
+  run ends. `max_sends` caps the groups per run (0 or absent for none).
 - A group that fails to fetch or deliver gets no receipt and does not stop the others. The run then
   fails, naming it, so it is tried again next run.
 

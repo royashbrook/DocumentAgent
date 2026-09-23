@@ -114,7 +114,7 @@ Describe 'a document run' {
     Test-Path "$DaJob/sent/C.json" | Should -BeFalse
     Get-ChildItem "$DaJob/out" -Filter *.pdf | Should -BeNullOrEmpty
   }
-  It 'hands a delivery that asks for -Documents the rows, and keeps same-named files apart' {
+  It 'hands a delivery that asks for -Documents the rows, and fetches a document shared by two groups once' {
     $global:DaRows = @(
       [pscustomobject]@{ document_id = 41; key = 'P-1'; file_name = 'same.pdf'; line = 1 }
       [pscustomobject]@{ document_id = 41; key = 'P-2'; file_name = 'same.pdf'; line = 2 }
@@ -131,6 +131,7 @@ $global:DaSent.Add(@{ key = $Key; items = @($Documents.line); present = @($Files
     $global:DaSent[0].items | Should -Be @(1)
     $global:DaSent[1].items | Should -Be @(2)
     $global:DaSent[1].present | Should -Be @($true)
+    Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 1 -Exactly
     (Get-Content "$DaJob/sent/P-2.json" -Raw | ConvertFrom-Json).delivery.status | Should -Be 'ok'
     Get-ChildItem "$DaJob/out" -Recurse -Filter *.pdf | Should -BeNullOrEmpty
   }

@@ -91,17 +91,22 @@ function Save-GroupDocument {
   $directory = (New-Item -ItemType Directory -Force $directory).FullName
   $source = $Options.Documents
   $context = @{}
+  # one fetch per document per run, however many groups it goes out in
+  $fetched = @{}
   $manifest = @(foreach ($group in @($Data)) {
     $entry = [ordered]@{ key = $group.key; documents = @($group.documents); files = @(); error = $null }
     if ($Options.Apply) {
       try {
-        # a folder per group: two groups can carry the same document under the same name
-        $folder = (New-Item -ItemType Directory -Force (Join-Path $directory ([string]$group.key))).FullName
         $entry.files = @(foreach ($document in $group.documents) {
-          [byte[]]$bytes = & (Resolve-Adapter 'documents' $source.adapter) -Document $document -Options $source.args -Context $context
-          $path = Join-Path $folder ([string]$document.file_name)
-          Set-Content -LiteralPath $path -Value $bytes -AsByteStream
-          $path
+          $id = [string]$document.document_id
+          if (-not $fetched.ContainsKey($id)) {
+            [byte[]]$bytes = & (Resolve-Adapter 'documents' $source.adapter) -Document $document -Options $source.args -Context $context
+            $folder = (New-Item -ItemType Directory -Force (Join-Path $directory $id)).FullName
+            $path = Join-Path $folder ([string]$document.file_name)
+            Set-Content -LiteralPath $path -Value $bytes -AsByteStream
+            $fetched[$id] = $path
+          }
+          $fetched[$id]
         })
       } catch {
         $entry.error = $_.Exception.Message
@@ -121,24 +126,29 @@ function Send-DocumentGroup {
   $adapter = Resolve-Adapter 'delivery' $delivery.adapter
   # an adapter that declares -Documents also gets the group's rows
   $withRows = (Get-Command $adapter).Parameters.ContainsKey('Documents')
-  foreach ($group in @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json)) {
-    $files = @($group.files)
-    $names = @($files | Split-Path -Leaf) -join ', '
-    try {
-      if ($group.error) { throw $group.error }
-      $arguments = @{ Key = $group.key; Files = $files; Options = $delivery.args }
-      if ($withRows) { $arguments.Documents = @($group.documents) }
-      $result = & $adapter @arguments
-    } catch {
-      Write-Log "Failed : $($group.key): $($_.Exception.Message)"
-      $failed.Add($group.key)
-      continue
-    } finally {
-      if ($files) { Remove-Item -LiteralPath (Split-Path $files[0]) -Recurse -Force -ErrorAction Ignore }
+  $groups = @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json)
+  try {
+    foreach ($group in $groups) {
+      $files = @($group.files)
+      $names = @($files | Split-Path -Leaf) -join ', '
+      try {
+        if ($group.error) { throw $group.error }
+        $arguments = @{ Key = $group.key; Files = $files; Options = $delivery.args }
+        if ($withRows) { $arguments.Documents = @($group.documents) }
+        $result = & $adapter @arguments
+      } catch {
+        Write-Log "Failed : $($group.key): $($_.Exception.Message)"
+        $failed.Add($group.key)
+        continue
+      }
+      [ordered]@{ key = $group.key; delivered_at = [datetime]::UtcNow.ToString('o'); delivery = $result; documents = @($group.documents) } |
+        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Options.Receipts "$($group.key).json")
+      Write-Log "Sent   : $($group.key) ($names)$(if ($result.to) { " -> $(@($result.to) -join ', ')" })"
     }
-    [ordered]@{ key = $group.key; delivered_at = [datetime]::UtcNow.ToString('o'); delivery = $result; documents = @($group.documents) } |
-      ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Options.Receipts "$($group.key).json")
-    Write-Log "Sent   : $($group.key) ($names)$(if ($result.to) { " -> $(@($result.to) -join ', ')" })"
+  } finally {
+    # a document can serve several groups, so the files go only once every group is done
+    $folders = @($groups.files | Where-Object { $_ } | Split-Path | Sort-Object -Unique)
+    if ($folders) { Remove-Item -LiteralPath $folders -Recurse -Force -ErrorAction Ignore }
   }
   if ($failed.Count) { throw "$($failed.Count) group(s) failed and will retry next run: $($failed -join ', ')" }
 }
