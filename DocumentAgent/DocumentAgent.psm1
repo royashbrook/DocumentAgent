@@ -1,25 +1,30 @@
 # DocumentAgent: a DataAgent variant that delivers documents, one group at a time, once.
-# The job calls Invoke-DataAgent itself so the runner's log and receipts land in the job folder.
 
+# the whole job: settings in, one run of DataAgent in the settings file's folder
+function Invoke-DocumentAgent {
+  [CmdletBinding()]
+  param([Parameter(Mandatory, Position = 0)][string]$Settings)
+  $path = (Resolve-Path -LiteralPath $Settings).Path
+  $config = New-DocumentAgentConfig $path
+  $config.directory = Split-Path $path
+  Invoke-DataAgent $config
+}
+
+# the DataAgent config for a document run, from a settings.json path or the settings as a hashtable.
+# like any feed it delivers everything ready; "dry_run" and "max_sends" in the settings are for testing.
 function New-DocumentAgentConfig {
   [CmdletBinding()]
-  param(
-    # a settings.json path or the settings as a hashtable
-    [Parameter(Mandatory, Position = 0)]$Settings,
-    [switch]$Apply,
-    # one send unless the caller asks for more; 0 means no cap
-    [ValidateRange(0, 10000)][int]$MaxSends = 1,
-    [string]$To
-  )
+  param([Parameter(Mandatory, Position = 0)]$Settings)
   if ($Settings -is [string]) { $Settings = Get-Content -LiteralPath $Settings -Raw | ConvertFrom-Json -AsHashtable }
   $Settings = Resolve-EnvValue $Settings
   $adapters = Join-Path $PSScriptRoot 'adapters'
   $receipts = if ($Settings.receipts) { [string]$Settings.receipts } else { 'sent' }
+  $apply = -not $Settings.dry_run
   $config = @{
-    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = $MaxSends } }
-    fmt = @{ adapter = Join-Path $adapters 'fetch.ps1'; args = @{ Path = 'out/documents.json'; Documents = $Settings.documents; Apply = [bool]$Apply } }
-    dst = if ($Apply) {
-      @{ adapter = Join-Path $adapters 'deliver.ps1'; args = @{ Delivery = $Settings.delivery; Receipts = $receipts; To = $To } }
+    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = [int]$Settings.max_sends } }
+    fmt = @{ adapter = Join-Path $adapters 'fetch.ps1'; args = @{ Path = 'out/documents.json'; Documents = $Settings.documents; Apply = $apply } }
+    dst = if ($apply) {
+      @{ adapter = Join-Path $adapters 'deliver.ps1'; args = @{ Delivery = $Settings.delivery; Receipts = $receipts } }
     } else {
       @{ adapter = Join-Path $adapters 'skip.ps1'; args = @{} }
     }
@@ -116,7 +121,7 @@ function Send-DocumentGroup {
     $names = @($files | Split-Path -Leaf) -join ', '
     try {
       if ($group.error) { throw $group.error }
-      $result = & (Resolve-Adapter 'delivery' $delivery.adapter) -Key $group.key -Files $files -Options $delivery.args -To $Options.To
+      $result = & (Resolve-Adapter 'delivery' $delivery.adapter) -Key $group.key -Files $files -Options $delivery.args
     } catch {
       Write-Log "Failed : $($group.key): $($_.Exception.Message)"
       $failed.Add($group.key)
@@ -131,4 +136,4 @@ function Send-DocumentGroup {
   if ($failed.Count) { throw "$($failed.Count) group(s) failed and will retry next run: $($failed -join ', ')" }
 }
 
-Export-ModuleMember -Function New-DocumentAgentConfig
+Export-ModuleMember -Function Invoke-DocumentAgent, New-DocumentAgentConfig

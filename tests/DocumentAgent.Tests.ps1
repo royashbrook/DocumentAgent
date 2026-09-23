@@ -8,24 +8,27 @@ BeforeAll {
     [pscustomobject]@{ document_id = 32; key = 'C'; type = 'BOL'; stamp = '2026-01-01T12:00:00'; file_name = 'Cbol.pdf' }
     [pscustomobject]@{ document_id = 33; key = 'C'; type = 'FB'; stamp = '2026-01-01T09:30:00'; file_name = 'Cfb.pdf' }
   )
-  'param([hashtable] $Options) $global:DaRows' | Set-Content "$TestDrive/rows.ps1"
-  @{
-    keepdays = 30; purgefiles = '*.log'
-    items = @{ adapter = "$TestDrive/rows.ps1"; args = @{}; key = 'key'; type = 'type'; order = 'stamp'; require = @('BOL', 'FB') }
-    documents = @{ adapter = 'ships'; args = @{ BaseUrl = 'https://portal.example/'; Username = 'reader'; Password = 'env:DA_TEST_PASSWORD' } }
-    delivery = @{ adapter = 'email'; args = @{ mail = @{ from = 'from@example.test'; to = @('to@example.test'); subject = 'Paperwork for {0}'; body = 'Attached: {0}' }; msgraph = @{ client_secret = 'env:DA_TEST_SECRET' }; contentType = 'application/pdf' } }
-  } | ConvertTo-Json -Depth 8 | Set-Content "$TestDrive/settings.json"
-  @'
-param([switch]$Apply, [int]$MaxSends, [string]$To)
-Invoke-DataAgent (New-DocumentAgentConfig "$PSScriptRoot/settings.json" @PSBoundParameters)
-'@ | Set-Content "$TestDrive/job.ps1"
+  $global:DaJob = Join-Path $TestDrive 'job'
+  New-Item -ItemType Directory $DaJob | Out-Null
+  'param([hashtable] $Options) $global:DaRows' | Set-Content "$DaJob/rows.ps1"
+  function Set-DaSettings([hashtable]$Extra = @{}) {
+    $settings = @{
+      keepdays = 30; purgefiles = '*.log'
+      items = @{ adapter = "$DaJob/rows.ps1"; args = @{}; key = 'key'; type = 'type'; order = 'stamp'; require = @('BOL', 'FB') }
+      documents = @{ adapter = 'ships'; args = @{ BaseUrl = 'https://portal.example/'; Username = 'reader'; Password = 'env:DA_TEST_PASSWORD' } }
+      delivery = @{ adapter = 'email'; args = @{ mail = @{ from = 'from@example.test'; to = @('to@example.test'); subject = 'Paperwork for {0}'; body = 'Attached: {0}' }; msgraph = @{ client_secret = 'env:DA_TEST_SECRET' }; contentType = 'application/pdf' } }
+    }
+    foreach ($key in $Extra.Keys) { $settings[$key] = $Extra[$key] }
+    $settings | ConvertTo-Json -Depth 8 | Set-Content "$DaJob/settings.json"
+  }
   $env:DA_TEST_PASSWORD = 'from-env-password'; $env:DA_TEST_SECRET = 'from-env-secret'
-  function Get-DaLog { Get-Content (Join-Path $TestDrive ('{0:yyyyMMdd}.log' -f (Get-Date))) | ForEach-Object { ($_ -split "`t")[-1] } }
+  function Get-DaLog { Get-Content (Join-Path $DaJob ('{0:yyyyMMdd}.log' -f (Get-Date))) | ForEach-Object { ($_ -split "`t")[-1] } }
 }
 
-Describe 'a document run through DataAgent' {
+Describe 'a document run' {
   BeforeEach {
-    Remove-Item "$TestDrive/sent", "$TestDrive/out", "$TestDrive/*.log" -Recurse -Force -ErrorAction Ignore
+    Remove-Item "$DaJob/sent", "$DaJob/out", "$DaJob/*.log" -Recurse -Force -ErrorAction Ignore
+    Set-Location $TestDrive
     $global:DaSent = [Collections.Generic.List[object]]::new()
     Mock New-ShipsSession -ModuleName DocumentAgent { [pscustomobject]@{ BaseUrl = $BaseUrl } }
     Mock Get-ShipsDocument -ModuleName DocumentAgent { ,([Text.Encoding]::ASCII.GetBytes("%PDF-$DocumentId")) }
@@ -33,20 +36,9 @@ Describe 'a document run through DataAgent' {
       $global:DaSent.Add(@{ files = @($Files | Split-Path -Leaf); present = @($Files | Test-Path); to = @($Cfg.mail.to); subject = $Cfg.mail.subject; body = $Cfg.mail.body; type = $ContentType; secret = $Cfg.msgraph.client_secret })
     }
   }
-  It 'dry run names the ready groups and the waiting one, fetches and sends nothing' {
-    & "$TestDrive/job.ps1"
-    $log = Get-DaLog
-    $log | Should -Contain 'Groups : 3 found, 0 already delivered, 1 waiting, 2 ready'
-    $log | Should -Contain 'Waiting: B is missing FB'
-    $log | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
-    $log | Should -Contain 'Dry run, not sending: A'
-    $log | Should -Contain 'End'
-    Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 0
-    Should -Invoke Send-FilesViaEmail -ModuleName DocumentAgent -Times 0
-    Test-Path "$TestDrive/sent" | Should -BeFalse
-  }
-  It 'delivers one email per complete group with the newest scan of each type, and keeps a receipt' {
-    & "$TestDrive/job.ps1" -Apply -MaxSends 0
+  It 'delivers every complete group by default, newest scan of each type, one email each, with a receipt' {
+    Set-DaSettings
+    Invoke-DocumentAgent "$DaJob/settings.json"
     $global:DaSent.Count | Should -Be 2
     $global:DaSent[0].subject | Should -Be 'Paperwork for A'
     $global:DaSent[0].files | Should -Be @('Abol.pdf', 'Afb.pdf')
@@ -56,57 +48,71 @@ Describe 'a document run through DataAgent' {
     Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 1 -Exactly -ParameterFilter { $DocumentId -eq 32 }
     Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 0 -ParameterFilter { $DocumentId -eq 31 }
     Should -Invoke New-ShipsSession -ModuleName DocumentAgent -Times 1 -Exactly
-    $receipt = Get-Content "$TestDrive/sent/C.json" -Raw | ConvertFrom-Json
+    $receipt = Get-Content "$DaJob/sent/C.json" -Raw | ConvertFrom-Json
     $receipt.documents.document_id | Should -Be @(32, 33)
     $receipt.delivery.to | Should -Be 'to@example.test'
-    Test-Path "$TestDrive/sent/B.json" | Should -BeFalse
-    Get-ChildItem "$TestDrive/out" -Filter *.pdf | Should -BeNullOrEmpty
-    Get-DaLog | Should -Contain 'Sent   : A (Abol.pdf, Afb.pdf) -> to@example.test'
+    Test-Path "$DaJob/sent/B.json" | Should -BeFalse
+    Get-ChildItem "$DaJob/out" -Filter *.pdf | Should -BeNullOrEmpty
+    $log = Get-DaLog
+    $log | Should -Contain 'Waiting: B is missing FB'
+    $log | Should -Contain 'Sent   : A (Abol.pdf, Afb.pdf) -> to@example.test'
   }
-  It 'never delivers a group twice, and an hour with nothing new is the idle marker' {
-    New-Item -ItemType Directory "$TestDrive/sent" -Force | Out-Null
-    '{}' | Set-Content "$TestDrive/sent/A.json"
-    '{}' | Set-Content "$TestDrive/sent/C.json"
-    & "$TestDrive/job.ps1" -Apply
+  It 'works in the settings file folder wherever it is called from' {
+    Set-DaSettings
+    Invoke-DocumentAgent "$DaJob/settings.json"
+    Test-Path (Join-Path $DaJob ('{0:yyyyMMdd}.log' -f (Get-Date))) | Should -BeTrue
+    Test-Path "$DaJob/sent/A.json" | Should -BeTrue
+    Test-Path "$TestDrive/sent" | Should -BeFalse
+    Get-ChildItem $TestDrive -Filter *.log | Should -BeNullOrEmpty
+  }
+  It 'dry_run names the ready groups, fetches and sends nothing' {
+    Set-DaSettings @{ dry_run = $true }
+    Invoke-DocumentAgent "$DaJob/settings.json"
+    Get-DaLog | Should -Contain 'Dry run, not sending: A, C'
+    Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 0
+    Should -Invoke Send-FilesViaEmail -ModuleName DocumentAgent -Times 0
+    Test-Path "$DaJob/sent" | Should -BeFalse
+  }
+  It 'max_sends caps a run and leaves the rest for the next one' {
+    Set-DaSettings @{ max_sends = 1 }
+    Invoke-DocumentAgent "$DaJob/settings.json"
+    $global:DaSent.Count | Should -Be 1
+    Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
+    Test-Path "$DaJob/sent/C.json" | Should -BeFalse
+  }
+  It 'never delivers a group twice, and nothing new is the idle marker' {
+    Set-DaSettings
+    New-Item -ItemType Directory "$DaJob/sent" -Force | Out-Null
+    '{}' | Set-Content "$DaJob/sent/A.json"
+    '{}' | Set-Content "$DaJob/sent/C.json"
+    Invoke-DocumentAgent "$DaJob/settings.json"
     Get-DaLog | Should -Contain 'No data available'
     Should -Invoke Send-FilesViaEmail -ModuleName DocumentAgent -Times 0
   }
-  It 'caps a run and leaves the rest for the next one' {
-    & "$TestDrive/job.ps1" -Apply -MaxSends 1
-    $global:DaSent.Count | Should -Be 1
-    Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
-    Test-Path "$TestDrive/sent/C.json" | Should -BeFalse
-  }
-  It 'sends one group by default when no cap is given' {
-    & "$TestDrive/job.ps1" -Apply
-    $global:DaSent.Count | Should -Be 1
-    Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
-  }
-  It 'reads env: values from the environment for the portal login and the mail secret' {
-    & "$TestDrive/job.ps1" -Apply
+  It 'reads env: values from the environment and keeps them out of the file' {
+    Set-DaSettings
+    Invoke-DocumentAgent "$DaJob/settings.json"
     Should -Invoke New-ShipsSession -ModuleName DocumentAgent -Times 1 -Exactly -ParameterFilter { $Credential.GetNetworkCredential().Password -eq 'from-env-password' }
     $global:DaSent[0].secret | Should -Be 'from-env-secret'
-    (Get-Content "$TestDrive/settings.json" -Raw) | Should -Not -Match 'from-env'
-  }
-  It 'routes every delivery to a test address when one is given' {
-    & "$TestDrive/job.ps1" -Apply -To 'me@example.test'
-    $global:DaSent | ForEach-Object { $_.to | Should -Be @('me@example.test') }
+    Get-Content "$DaJob/settings.json" -Raw | Should -Not -Match 'from-env'
   }
   It 'delivers the groups behind a failed one, then fails the run naming it' {
+    Set-DaSettings
     Mock Get-ShipsDocument -ModuleName DocumentAgent { if ($DocumentId -eq 11) { throw 'portal error for 11' }; ,([Text.Encoding]::ASCII.GetBytes('%PDF-')) }
-    { & "$TestDrive/job.ps1" -Apply -MaxSends 0 } | Should -Throw '*1 group(s) failed*A*'
+    { Invoke-DocumentAgent "$DaJob/settings.json" } | Should -Throw '*1 group(s) failed*A*'
     $global:DaSent.Count | Should -Be 1
     $global:DaSent[0].subject | Should -Be 'Paperwork for C'
-    Test-Path "$TestDrive/sent/A.json" | Should -BeFalse
-    Test-Path "$TestDrive/sent/C.json" | Should -BeTrue
+    Test-Path "$DaJob/sent/A.json" | Should -BeFalse
+    Test-Path "$DaJob/sent/C.json" | Should -BeTrue
     Get-DaLog | Should -Contain 'Failed : A: portal error for 11'
   }
   It 'keeps no receipt when the delivery itself fails' {
+    Set-DaSettings
     Mock Send-FilesViaEmail -ModuleName DocumentAgent { if ($Cfg.mail.subject -match 'C$') { throw 'graph timeout' } }
-    { & "$TestDrive/job.ps1" -Apply -MaxSends 0 } | Should -Throw '*C*'
-    Test-Path "$TestDrive/sent/A.json" | Should -BeTrue
-    Test-Path "$TestDrive/sent/C.json" | Should -BeFalse
-    Get-ChildItem "$TestDrive/out" -Filter *.pdf | Should -BeNullOrEmpty
+    { Invoke-DocumentAgent "$DaJob/settings.json" } | Should -Throw '*C*'
+    Test-Path "$DaJob/sent/A.json" | Should -BeTrue
+    Test-Path "$DaJob/sent/C.json" | Should -BeFalse
+    Get-ChildItem "$DaJob/out" -Filter *.pdf | Should -BeNullOrEmpty
   }
 }
 

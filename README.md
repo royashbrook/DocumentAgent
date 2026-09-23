@@ -5,17 +5,16 @@ groups them, fetches each group, delivers it once and keeps a receipt. DataAgent
 so the log, cleanup and idle marker are the same as every other DataAgent job.
 
 ```powershell
-param([switch]$Apply, [int]$MaxSends, [string]$To)
 Import-Module DocumentAgent   # brings DataAgent, ShipsDocuments and Send-FilesViaEmail with it
-Invoke-DataAgent (New-DocumentAgentConfig "$PSScriptRoot/settings.json" @PSBoundParameters)
+Invoke-DocumentAgent "$PSScriptRoot/settings.json"
 ```
 
-`New-DocumentAgentConfig` takes a settings.json path or a hashtable. Any value written as
-`env:NAME` is read from that environment variable, so the committed file holds names, never
-secrets. `-MaxSends` defaults to 1, so a hand run sends one group. Pass 0 for no cap.
-
-Call `Invoke-DataAgent` from the job script itself. DataAgent works in the folder of the script that
-calls it, so that is where the log, `out/` and the receipts land.
+The run works in the settings file's folder: the log, `out/` and the receipts land there, wherever the
+call comes from. Any value written as `env:NAME` is read from that environment variable, so the
+committed file holds names, never secrets. Like any feed, a run delivers everything that is ready.
+To test, point the delivery at yourself and add `"dry_run": true` (name what would go, send
+nothing) or `"max_sends": 1` (cap the run) to the settings. `New-DocumentAgentConfig` returns the
+DataAgent config without running it.
 
 ## settings
 
@@ -24,6 +23,8 @@ calls it, so that is where the log, `out/` and the receipts land.
   "keepdays": 30,
   "purgefiles": "*.log",
   "receipts": "sent",
+  "dry_run": false,
+  "max_sends": 0,
   "items": {
     "adapter": "sql",
     "args": { "InputFile": "get-data.sql", "QueryTimeout": 60, "ConnectionString": "env:CONNECTION_STRING" },
@@ -58,19 +59,19 @@ Any adapter can be a `.ps1` path instead of a name:
 - items: `param([hashtable] $Options)`, return rows.
 - documents: `param($Document, [hashtable] $Options, [hashtable] $Context)`, return the bytes. Context
   lives for the run, for a session or a client.
-- delivery: `param([string] $Key, [string[]] $Files, [hashtable] $Options, [string] $To)`. Throw on
+- delivery: `param([string] $Key, [string[]] $Files, [hashtable] $Options)`. Throw on
   failure. Whatever it returns is kept in the receipt as `delivery`.
 
-A custom adapter that reads or writes files through .NET should use full paths. DataAgent moves
-PowerShell's location to the job folder, not the process working directory.
+A custom adapter that reads or writes files through .NET should use full paths. The run moves
+PowerShell's location to the settings folder, not the process working directory.
 
 ## a run
 
 - The source groups the rows and skips any group with a receipt in `receipts/<key>.json`. Nothing
   ready logs `No data available`.
-- Without `-Apply`, nothing is fetched and the log names the groups that would go.
-- With `-Apply`, each group's files are fetched into `out/`, delivered, then removed, and the receipt
-  is written. `-MaxSends` caps the groups per run (1 unless given, 0 for none). `-To` sends every delivery to one test address.
+- With `dry_run`, nothing is fetched and the log names the groups that would go.
+- Otherwise each group's files are fetched into `out/`, delivered, then removed, and the receipt
+  is written. `max_sends` caps the groups per run (0 or absent for none).
 - A group that fails to fetch or deliver gets no receipt and does not stop the others. The run then
   fails, naming it, so it is tried again next run.
 

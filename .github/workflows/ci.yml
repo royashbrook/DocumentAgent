@@ -13,7 +13,7 @@ jobs:
       - shell: pwsh
         run: |
           Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
-          Install-Module DataAgent -RequiredVersion 0.4.2 -Scope CurrentUser -Force
+          Install-Module DataAgent -RequiredVersion 0.5.0 -Scope CurrentUser -Force
           Install-Module Add-PrefixForLogging, Clear-Files, SqlServer -Scope CurrentUser -Force -AcceptLicense
           Install-Module ShipsDocuments -RequiredVersion 1.0.0 -Scope CurrentUser -Force
           Install-Module Send-FilesViaEmail -RequiredVersion 1.0.0 -Scope CurrentUser -Force
