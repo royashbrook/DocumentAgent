@@ -5,16 +5,14 @@ groups them, fetches each group, delivers it once and keeps a receipt. DataAgent
 so the log, cleanup and idle marker are the same as every other DataAgent job.
 
 ```powershell
+param([switch]$Apply, [int]$MaxSends, [string]$To)
 Import-Module DocumentAgent   # brings DataAgent, ShipsDocuments and Send-FilesViaEmail with it
-
-$settings = Get-Content "$PSScriptRoot/settings.json" -Raw | ConvertFrom-Json -AsHashtable
-# secrets come from the environment, never the committed settings
-$settings.items.args.ConnectionString = $env:CONNECTION_STRING
-$settings.documents.args.Password = $env:READER_PASSWORD
-$settings.delivery.args.msgraph.client_secret = $env:CLIENT_SECRET
-
-Invoke-DataAgent (New-DocumentAgentConfig -Settings $settings -Apply:$Apply -MaxSends $MaxSends -To $To)
+Invoke-DataAgent (New-DocumentAgentConfig "$PSScriptRoot/settings.json" @PSBoundParameters)
 ```
+
+`New-DocumentAgentConfig` takes a settings.json path or a hashtable. Any value written as
+`env:NAME` is read from that environment variable, so the committed file holds names, never
+secrets. `-MaxSends` defaults to 1, so a hand run sends one group. Pass 0 for no cap.
 
 Call `Invoke-DataAgent` from the job script itself. DataAgent works in the folder of the script that
 calls it, so that is where the log, `out/` and the receipts land.
@@ -28,18 +26,18 @@ calls it, so that is where the log, `out/` and the receipts land.
   "receipts": "sent",
   "items": {
     "adapter": "sql",
-    "args": { "InputFile": "get-data.sql", "QueryTimeout": 60 },
+    "args": { "InputFile": "get-data.sql", "QueryTimeout": 60, "ConnectionString": "env:CONNECTION_STRING" },
     "key": "reference",
     "type": "doc_type",
     "order": "filed_at",
     "require": ["BOL", "FB"]
   },
-  "documents": { "adapter": "ships", "args": { "BaseUrl": "https://host/ships5web/", "Username": "reader" } },
+  "documents": { "adapter": "ships", "args": { "BaseUrl": "https://host/ships5web/", "Username": "reader", "Password": "env:READER_PASSWORD" } },
   "delivery": {
     "adapter": "email",
     "args": {
       "mail": { "from": "from@example.com", "to": ["to@example.com"], "subject": "Paperwork for {0}", "body": "Attached: {0}" },
-      "msgraph": { "tenant_id": "...", "client_id": "..." },
+      "msgraph": { "tenant_id": "...", "client_id": "...", "client_secret": "env:CLIENT_SECRET" },
       "contentType": "application/pdf"
     }
   }
@@ -63,13 +61,16 @@ Any adapter can be a `.ps1` path instead of a name:
 - delivery: `param([string] $Key, [string[]] $Files, [hashtable] $Options, [string] $To)`. Throw on
   failure. Whatever it returns is kept in the receipt as `delivery`.
 
+A custom adapter that reads or writes files through .NET should use full paths. DataAgent moves
+PowerShell's location to the job folder, not the process working directory.
+
 ## a run
 
 - The source groups the rows and skips any group with a receipt in `receipts/<key>.json`. Nothing
   ready logs `No data available`.
 - Without `-Apply`, nothing is fetched and the log names the groups that would go.
 - With `-Apply`, each group's files are fetched into `out/`, delivered, then removed, and the receipt
-  is written. `-MaxSends` caps the groups per run. `-To` sends every delivery to one test address.
+  is written. `-MaxSends` caps the groups per run (1 unless given, 0 for none). `-To` sends every delivery to one test address.
 - A group that fails to fetch or deliver gets no receipt and does not stop the others. The run then
   fails, naming it, so it is tried again next run.
 

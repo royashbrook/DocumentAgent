@@ -1,6 +1,6 @@
 @{
   RootModule = 'DocumentAgent.psm1'
-  ModuleVersion = '0.1.0'
+  ModuleVersion = '0.1.1'
   GUID = '13b16fdd-dfdb-4955-a738-48df45860bb5'
   Author = 'Roy Ashbrook'
   CompanyName = 'ashbrook.io'

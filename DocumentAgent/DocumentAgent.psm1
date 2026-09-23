@@ -4,11 +4,15 @@
 function New-DocumentAgentConfig {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory)][hashtable]$Settings,
+    # a settings.json path or the settings as a hashtable
+    [Parameter(Mandatory, Position = 0)]$Settings,
     [switch]$Apply,
-    [ValidateRange(0, 10000)][int]$MaxSends = 0,
+    # one send unless the caller asks for more; 0 means no cap
+    [ValidateRange(0, 10000)][int]$MaxSends = 1,
     [string]$To
   )
+  if ($Settings -is [string]) { $Settings = Get-Content -LiteralPath $Settings -Raw | ConvertFrom-Json -AsHashtable }
+  $Settings = Resolve-EnvValue $Settings
   $adapters = Join-Path $PSScriptRoot 'adapters'
   $receipts = if ($Settings.receipts) { [string]$Settings.receipts } else { 'sent' }
   $config = @{
@@ -22,6 +26,21 @@ function New-DocumentAgentConfig {
   }
   foreach ($name in 'keepdays', 'purgefiles') { if ($Settings.ContainsKey($name)) { $config[$name] = $Settings[$name] } }
   $config
+}
+
+# "env:NAME" anywhere in the settings is read from that environment variable, so secrets stay out of the file
+function Resolve-EnvValue($Value) {
+  if ($Value -is [string]) {
+    if ($Value -match '^env:(.+)$') { return [Environment]::GetEnvironmentVariable($Matches[1]) }
+    return $Value
+  }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $copy = @{}
+    foreach ($key in $Value.Keys) { $copy[$key] = Resolve-EnvValue $Value[$key] }
+    return $copy
+  }
+  if ($Value -is [System.Collections.IList]) { return , @(foreach ($item in $Value) { Resolve-EnvValue $item }) }
+  $Value
 }
 
 # l returns its line; a source must keep its output stream for records, so the log line goes to the host

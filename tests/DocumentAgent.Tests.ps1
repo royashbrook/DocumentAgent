@@ -9,16 +9,17 @@ BeforeAll {
     [pscustomobject]@{ document_id = 33; key = 'C'; type = 'FB'; stamp = '2026-01-01T09:30:00'; file_name = 'Cfb.pdf' }
   )
   'param([hashtable] $Options) $global:DaRows' | Set-Content "$TestDrive/rows.ps1"
+  @{
+    keepdays = 30; purgefiles = '*.log'
+    items = @{ adapter = "$TestDrive/rows.ps1"; args = @{}; key = 'key'; type = 'type'; order = 'stamp'; require = @('BOL', 'FB') }
+    documents = @{ adapter = 'ships'; args = @{ BaseUrl = 'https://portal.example/'; Username = 'reader'; Password = 'env:DA_TEST_PASSWORD' } }
+    delivery = @{ adapter = 'email'; args = @{ mail = @{ from = 'from@example.test'; to = @('to@example.test'); subject = 'Paperwork for {0}'; body = 'Attached: {0}' }; msgraph = @{ client_secret = 'env:DA_TEST_SECRET' }; contentType = 'application/pdf' } }
+  } | ConvertTo-Json -Depth 8 | Set-Content "$TestDrive/settings.json"
   @'
 param([switch]$Apply, [int]$MaxSends, [string]$To)
-$settings = @{
-  keepdays = 30; purgefiles = '*.log'
-  items = @{ adapter = "$PSScriptRoot/rows.ps1"; args = @{}; key = 'key'; type = 'type'; order = 'stamp'; require = @('BOL', 'FB') }
-  documents = @{ adapter = 'ships'; args = @{ BaseUrl = 'https://portal.example/'; Username = 'reader'; Password = 'synthetic' } }
-  delivery = @{ adapter = 'email'; args = @{ mail = @{ from = 'from@example.test'; to = @('to@example.test'); subject = 'Paperwork for {0}'; body = 'Attached: {0}' }; msgraph = @{ client_secret = 'synthetic' }; contentType = 'application/pdf' } }
-}
-Invoke-DataAgent (New-DocumentAgentConfig -Settings $settings -Apply:$Apply -MaxSends $MaxSends -To $To)
+Invoke-DataAgent (New-DocumentAgentConfig "$PSScriptRoot/settings.json" @PSBoundParameters)
 '@ | Set-Content "$TestDrive/job.ps1"
+  $env:DA_TEST_PASSWORD = 'from-env-password'; $env:DA_TEST_SECRET = 'from-env-secret'
   function Get-DaLog { Get-Content (Join-Path $TestDrive ('{0:yyyyMMdd}.log' -f (Get-Date))) | ForEach-Object { ($_ -split "`t")[-1] } }
 }
 
@@ -29,7 +30,7 @@ Describe 'a document run through DataAgent' {
     Mock New-ShipsSession -ModuleName DocumentAgent { [pscustomobject]@{ BaseUrl = $BaseUrl } }
     Mock Get-ShipsDocument -ModuleName DocumentAgent { ,([Text.Encoding]::ASCII.GetBytes("%PDF-$DocumentId")) }
     Mock Send-FilesViaEmail -ModuleName DocumentAgent {
-      $global:DaSent.Add(@{ files = @($Files | Split-Path -Leaf); present = @($Files | Test-Path); to = @($Cfg.mail.to); subject = $Cfg.mail.subject; body = $Cfg.mail.body; type = $ContentType })
+      $global:DaSent.Add(@{ files = @($Files | Split-Path -Leaf); present = @($Files | Test-Path); to = @($Cfg.mail.to); subject = $Cfg.mail.subject; body = $Cfg.mail.body; type = $ContentType; secret = $Cfg.msgraph.client_secret })
     }
   }
   It 'dry run names the ready groups and the waiting one, fetches and sends nothing' {
@@ -37,14 +38,15 @@ Describe 'a document run through DataAgent' {
     $log = Get-DaLog
     $log | Should -Contain 'Groups : 3 found, 0 already delivered, 1 waiting, 2 ready'
     $log | Should -Contain 'Waiting: B is missing FB'
-    $log | Should -Contain 'Dry run, not sending: A, C'
+    $log | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
+    $log | Should -Contain 'Dry run, not sending: A'
     $log | Should -Contain 'End'
     Should -Invoke Get-ShipsDocument -ModuleName DocumentAgent -Times 0
     Should -Invoke Send-FilesViaEmail -ModuleName DocumentAgent -Times 0
     Test-Path "$TestDrive/sent" | Should -BeFalse
   }
   It 'delivers one email per complete group with the newest scan of each type, and keeps a receipt' {
-    & "$TestDrive/job.ps1" -Apply
+    & "$TestDrive/job.ps1" -Apply -MaxSends 0
     $global:DaSent.Count | Should -Be 2
     $global:DaSent[0].subject | Should -Be 'Paperwork for A'
     $global:DaSent[0].files | Should -Be @('Abol.pdf', 'Afb.pdf')
@@ -75,13 +77,24 @@ Describe 'a document run through DataAgent' {
     Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
     Test-Path "$TestDrive/sent/C.json" | Should -BeFalse
   }
+  It 'sends one group by default when no cap is given' {
+    & "$TestDrive/job.ps1" -Apply
+    $global:DaSent.Count | Should -Be 1
+    Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
+  }
+  It 'reads env: values from the environment for the portal login and the mail secret' {
+    & "$TestDrive/job.ps1" -Apply
+    Should -Invoke New-ShipsSession -ModuleName DocumentAgent -Times 1 -Exactly -ParameterFilter { $Credential.GetNetworkCredential().Password -eq 'from-env-password' }
+    $global:DaSent[0].secret | Should -Be 'from-env-secret'
+    (Get-Content "$TestDrive/settings.json" -Raw) | Should -Not -Match 'from-env'
+  }
   It 'routes every delivery to a test address when one is given' {
     & "$TestDrive/job.ps1" -Apply -To 'me@example.test'
     $global:DaSent | ForEach-Object { $_.to | Should -Be @('me@example.test') }
   }
   It 'delivers the groups behind a failed one, then fails the run naming it' {
     Mock Get-ShipsDocument -ModuleName DocumentAgent { if ($DocumentId -eq 11) { throw 'portal error for 11' }; ,([Text.Encoding]::ASCII.GetBytes('%PDF-')) }
-    { & "$TestDrive/job.ps1" -Apply } | Should -Throw '*1 group(s) failed*A*'
+    { & "$TestDrive/job.ps1" -Apply -MaxSends 0 } | Should -Throw '*1 group(s) failed*A*'
     $global:DaSent.Count | Should -Be 1
     $global:DaSent[0].subject | Should -Be 'Paperwork for C'
     Test-Path "$TestDrive/sent/A.json" | Should -BeFalse
@@ -90,7 +103,7 @@ Describe 'a document run through DataAgent' {
   }
   It 'keeps no receipt when the delivery itself fails' {
     Mock Send-FilesViaEmail -ModuleName DocumentAgent { if ($Cfg.mail.subject -match 'C$') { throw 'graph timeout' } }
-    { & "$TestDrive/job.ps1" -Apply } | Should -Throw '*C*'
+    { & "$TestDrive/job.ps1" -Apply -MaxSends 0 } | Should -Throw '*C*'
     Test-Path "$TestDrive/sent/A.json" | Should -BeTrue
     Test-Path "$TestDrive/sent/C.json" | Should -BeFalse
     Get-ChildItem "$TestDrive/out" -Filter *.pdf | Should -BeNullOrEmpty
