@@ -1,0 +1,21 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: |
+          Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module DataAgent -RequiredVersion 0.4.2 -Scope CurrentUser -Force
+          Install-Module Add-PrefixForLogging, Clear-Files, SqlServer -Scope CurrentUser -Force -AcceptLicense
+          Install-Module ShipsDocuments -RequiredVersion 1.0.0 -Scope CurrentUser -Force
+          Install-Module Send-FilesViaEmail -RequiredVersion 1.0.0 -Scope CurrentUser -Force
+          Test-ModuleManifest ./DocumentAgent/DocumentAgent.psd1 | Out-Null
+          Invoke-Pester ./tests -CI

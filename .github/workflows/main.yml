@@ -1,0 +1,20 @@
+name: PSGallery
+on:
+  release:
+    types: [released]
+jobs:
+  psgallery_publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Publishing
+        shell: pwsh
+        run: |
+          # the gallery checks RequiredModules against what is installed here
+          Install-Module DataAgent -RequiredVersion 0.4.2 -Scope CurrentUser -Force
+          Install-Module Add-PrefixForLogging -Scope CurrentUser -Force
+          Install-Module ShipsDocuments -RequiredVersion 1.0.0 -Scope CurrentUser -Force
+          Install-Module Send-FilesViaEmail -RequiredVersion 1.0.0 -Scope CurrentUser -Force
+          Publish-Module -Path 'DocumentAgent' -NuGetApiKey ${{ secrets.PS_GALLERY_KEY }}
