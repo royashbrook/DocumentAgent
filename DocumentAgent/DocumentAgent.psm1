@@ -69,7 +69,7 @@ function Select-DocumentGroup {
       $documents = @($documents | Sort-Object { [string]$_.$order }, { [long]$_.document_id } -Descending |
         Group-Object -CaseSensitive { [string]$_.$type } | ForEach-Object { $_.Group[0] } | Sort-Object { [string]$_.$type })
     }
-    $missing = @($items.require | Where-Object { $_ -cnotin @($documents | ForEach-Object { [string]$_.$type }) })
+    $missing = @($items.require | Where-Object { $_ -and $_ -cnotin @($documents | ForEach-Object { [string]$_.$type }) })
     [pscustomobject]@{ key = $_.Name; documents = $documents; missing = $missing }
   } | Sort-Object key)
   $delivered = @($groups | Where-Object { Test-Path -LiteralPath (Join-Path $Options.Receipts "$($_.key).json") })
@@ -95,9 +95,11 @@ function Save-GroupDocument {
     $entry = [ordered]@{ key = $group.key; documents = @($group.documents); files = @(); error = $null }
     if ($Options.Apply) {
       try {
+        # a folder per group: two groups can carry the same document under the same name
+        $folder = (New-Item -ItemType Directory -Force (Join-Path $directory ([string]$group.key))).FullName
         $entry.files = @(foreach ($document in $group.documents) {
           [byte[]]$bytes = & (Resolve-Adapter 'documents' $source.adapter) -Document $document -Options $source.args -Context $context
-          $path = Join-Path $directory ([string]$document.file_name)
+          $path = Join-Path $folder ([string]$document.file_name)
           Set-Content -LiteralPath $path -Value $bytes -AsByteStream
           $path
         })
@@ -116,18 +118,23 @@ function Send-DocumentGroup {
   $delivery = $Options.Delivery
   $null = New-Item -ItemType Directory -Force $Options.Receipts
   $failed = [Collections.Generic.List[string]]::new()
+  $adapter = Resolve-Adapter 'delivery' $delivery.adapter
+  # an adapter that declares -Documents also gets the group's rows
+  $withRows = (Get-Command $adapter).Parameters.ContainsKey('Documents')
   foreach ($group in @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json)) {
     $files = @($group.files)
     $names = @($files | Split-Path -Leaf) -join ', '
     try {
       if ($group.error) { throw $group.error }
-      $result = & (Resolve-Adapter 'delivery' $delivery.adapter) -Key $group.key -Files $files -Options $delivery.args
+      $arguments = @{ Key = $group.key; Files = $files; Options = $delivery.args }
+      if ($withRows) { $arguments.Documents = @($group.documents) }
+      $result = & $adapter @arguments
     } catch {
       Write-Log "Failed : $($group.key): $($_.Exception.Message)"
       $failed.Add($group.key)
       continue
     } finally {
-      if ($files) { Remove-Item -LiteralPath $files -Force -ErrorAction Ignore }
+      if ($files) { Remove-Item -LiteralPath (Split-Path $files[0]) -Recurse -Force -ErrorAction Ignore }
     }
     [ordered]@{ key = $group.key; delivered_at = [datetime]::UtcNow.ToString('o'); delivery = $result; documents = @($group.documents) } |
       ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Options.Receipts "$($group.key).json")

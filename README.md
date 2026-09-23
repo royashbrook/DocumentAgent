@@ -60,7 +60,8 @@ Any adapter can be a `.ps1` path instead of a name:
 - documents: `param($Document, [hashtable] $Options, [hashtable] $Context)`, return the bytes. Context
   lives for the run, for a session or a client.
 - delivery: `param([string] $Key, [string[]] $Files, [hashtable] $Options)`. Throw on
-  failure. Whatever it returns is kept in the receipt as `delivery`.
+  failure. Whatever it returns is kept in the receipt as `delivery`. Add `[object[]] $Documents`
+  to the params to also get the group's rows, in the same order as the files.
 
 A custom adapter that reads or writes files through .NET should use full paths. The run moves
 PowerShell's location to the settings folder, not the process working directory.
