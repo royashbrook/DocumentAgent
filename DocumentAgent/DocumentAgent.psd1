@@ -1,6 +1,6 @@
 @{
   RootModule = 'DocumentAgent.psm1'
-  ModuleVersion = '0.3.1'
+  ModuleVersion = '0.3.2'
   GUID = '13b16fdd-dfdb-4955-a738-48df45860bb5'
   Author = 'Roy Ashbrook'
   CompanyName = 'ashbrook.io'
@@ -9,7 +9,7 @@
   PowerShellVersion = '7.4'
   RequiredModules = @(
     @{ ModuleName = 'DataAgent'; RequiredVersion = '0.5.0' }
-    @{ ModuleName = 'Add-PrefixForLogging'; ModuleVersion = '1.0.0.2' }
+    @{ ModuleName = 'Add-PrefixForLogging'; RequiredVersion = '1.0.0.3' }
     @{ ModuleName = 'ShipsDocuments'; RequiredVersion = '1.0.0' }
     @{ ModuleName = 'Send-FilesViaEmail'; RequiredVersion = '1.0.0' }
   )

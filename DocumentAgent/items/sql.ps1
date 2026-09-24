@@ -1,6 +1,6 @@
 # items from a query: every argument goes to Invoke-Sqlcmd; rows come back as plain objects
 param([hashtable] $Options)
-Import-Module SqlServer -Cmdlet Invoke-Sqlcmd
+Import-Module SqlServer -RequiredVersion 22.4.5.1 -Cmdlet Invoke-Sqlcmd
 Invoke-Sqlcmd @Options -OutputAs DataRows | ForEach-Object {
   $row = $_
   $item = [ordered]@{}
