@@ -106,6 +106,22 @@ Describe 'a document run' {
     Test-Path "$DaJob/sent/C.json" | Should -BeTrue
     Get-DaLog | Should -Contain 'Failed : A: portal error for 11'
   }
+  It 'drops a receipt older than keep_days, so that group goes again, and keeps a newer one' {
+    Set-DaSettings @{ keep_days = 14 }
+    New-Item -ItemType Directory "$DaJob/sent" | Out-Null
+    @{ key = 'A'; delivered_at = [datetime]::UtcNow.AddDays(-15).ToString('o') } | ConvertTo-Json | Set-Content "$DaJob/sent/A.json"
+    @{ key = 'C'; delivered_at = [datetime]::UtcNow.AddDays(-13).ToString('o') } | ConvertTo-Json | Set-Content "$DaJob/sent/C.json"
+    Invoke-DocumentAgent "$DaJob/settings.json"
+    @($global:DaSent.subject) | Should -Be @('Paperwork for A')
+    ((Get-Content "$DaJob/sent/C.json" -Raw | ConvertFrom-Json).delivered_at | Get-Date) | Should -BeLessThan ([datetime]::UtcNow.AddDays(-12))
+  }
+  It 'keeps every receipt in a dry run' {
+    Set-DaSettings @{ keep_days = 14; dry_run = $true }
+    New-Item -ItemType Directory "$DaJob/sent" | Out-Null
+    @{ key = 'A'; delivered_at = [datetime]::UtcNow.AddDays(-30).ToString('o') } | ConvertTo-Json | Set-Content "$DaJob/sent/A.json"
+    Invoke-DocumentAgent "$DaJob/settings.json"
+    Test-Path "$DaJob/sent/A.json" | Should -BeTrue
+  }
   It 'keeps no receipt when the delivery itself fails' {
     Set-DaSettings
     Mock Send-FilesViaEmail -ModuleName DocumentAgent { if ($Cfg.mail.subject -match 'C$') { throw 'graph timeout' } }

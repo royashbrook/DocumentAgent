@@ -23,6 +23,7 @@ DataAgent config without running it.
   "keepdays": 30,
   "purgefiles": "*.log",
   "receipts": "sent",
+  "keep_days": 14,
   "dry_run": false,
   "max_sends": 0,
   "items": {
@@ -77,4 +78,6 @@ PowerShell's location to the settings folder, not the process working directory.
 - A group that fails to fetch or deliver gets no receipt and does not stop the others. The run then
   fails, naming it, so it is tried again next run.
 
-Receipts are files, so commit them back from the job if the job runs on a fresh checkout.
+Receipts are files, so commit them back from the job if the job runs on a fresh checkout. A receipt is
+kept `keep_days` (14 by default) after its `delivered_at`, then removed at the start of a run, so a
+group the items query still returns after that goes again. A dry run removes none.

@@ -21,7 +21,7 @@ function New-DocumentAgentConfig {
   $receipts = if ($Settings.receipts) { [string]$Settings.receipts } else { 'sent' }
   $apply = -not $Settings.dry_run
   $config = @{
-    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = [int]$Settings.max_sends } }
+    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = [int]$Settings.max_sends; KeepDays = $(if (-not $apply) { 0 } elseif ($Settings.keep_days) { [int]$Settings.keep_days } else { 14 }) } }
     fmt = @{ adapter = Join-Path $adapters 'fetch.ps1'; args = @{ Path = 'out/documents.json'; Documents = $Settings.documents; Apply = $apply } }
     dst = if ($apply) {
       @{ adapter = Join-Path $adapters 'deliver.ps1'; args = @{ Delivery = $Settings.delivery; Receipts = $receipts } }
@@ -59,6 +59,15 @@ function Resolve-Adapter([string]$Role, [string]$Name) {
 # source: rows -> groups that are complete, not yet delivered, within the send cap
 function Select-DocumentGroup {
   param([hashtable]$Options)
+  # a receipt is kept keep_days (14 by default, like the other document feeds) after its delivery, read
+  # from the receipt itself; a dry run keeps them all
+  if ($Options.KeepDays -gt 0 -and (Test-Path -LiteralPath $Options.Receipts)) {
+    $cutoff = [datetime]::UtcNow.AddDays(-$Options.KeepDays)
+    foreach ($file in @(Get-ChildItem -LiteralPath $Options.Receipts -Filter '*.json' -File)) {
+      $at = (Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json).delivered_at
+      if ($at -and ([datetime]$at).ToUniversalTime() -lt $cutoff) { Remove-Item -LiteralPath $file.FullName }
+    }
+  }
   $items = $Options.Items
   $rows = @(& (Resolve-Adapter 'items' $items.adapter) -Options $items.args)
   $key = $items.key; $type = $items.type; $order = $items.order
