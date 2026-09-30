@@ -11,7 +11,7 @@ Invoke-DocumentAgent "$PSScriptRoot/settings.json"
 
 The run works in the settings file's folder: the log, `out/` and the receipts land there, wherever the
 call comes from. Any value written as `env:NAME` is read from that environment variable, so the
-committed file holds names, never secrets. A run delivers what is ready, up to 200 groups.
+committed file holds names, never secrets. A run delivers what is ready, up to 1000 groups.
 To test, point the delivery at yourself and add `"dry_run": true` (name what would go, send
 nothing) or `"max_sends": 1` (cap the run) to the settings. `New-DocumentAgentConfig` returns the
 DataAgent config without running it.
@@ -25,7 +25,7 @@ DataAgent config without running it.
   "receipts": "sent",
   "keep_days": 14,
   "dry_run": false,
-  "max_sends": 200,
+  "max_sends": 1000,
   "items": {
     "adapter": "sql",
     "args": { "InputFile": "get-data.sql", "QueryTimeout": 60, "ConnectionString": "env:CONNECTION_STRING" },
@@ -74,7 +74,7 @@ PowerShell's location to the settings folder, not the process working directory.
 - With `dry_run`, nothing is fetched and the log names the groups that would go.
 - Otherwise each document is fetched once into `out/<document_id>/`, even when it goes out in
   several groups, then each group is delivered and gets its receipt. The files are removed when the
-  run ends. `max_sends` caps the groups per run (200 if absent, 0 for no cap), and the rest go next run.
+  run ends. `max_sends` caps the groups per run (1000 if absent, 0 for no cap), and the rest go next run.
 - A group that fails to fetch or deliver gets no receipt and does not stop the others. The run then
   fails, naming it, so it is tried again next run.
 

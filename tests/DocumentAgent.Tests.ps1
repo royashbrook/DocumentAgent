@@ -80,8 +80,8 @@ Describe 'a document run' {
     Get-DaLog | Should -Contain 'Cap    : 1 of 2 this run, the rest go next run'
     Test-Path "$DaJob/sent/C.json" | Should -BeFalse
   }
-  It 'caps a run at 200 unless max_sends says otherwise, 0 for no cap' {
-    (New-DocumentAgentConfig @{ items = @{} }).src.args.MaxSends | Should -Be 200
+  It 'caps a run at 1000 unless max_sends says otherwise, 0 for no cap' {
+    (New-DocumentAgentConfig @{ items = @{} }).src.args.MaxSends | Should -Be 1000
     (New-DocumentAgentConfig @{ items = @{}; max_sends = 0 }).src.args.MaxSends | Should -Be 0
     (New-DocumentAgentConfig @{ items = @{}; max_sends = 5 }).src.args.MaxSends | Should -Be 5
   }

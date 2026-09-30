@@ -11,7 +11,7 @@ function Invoke-DocumentAgent {
 }
 
 # the DataAgent config for a document run, from a settings.json path or the settings as a hashtable.
-# a run sends at most max_sends groups (200 by default, 0 for no cap), the rest go next run; "dry_run" is for testing.
+# a run sends at most max_sends groups (1000 by default, 0 for no cap), the rest go next run; "dry_run" is for testing.
 function New-DocumentAgentConfig {
   [CmdletBinding()]
   param([Parameter(Mandatory, Position = 0)]$Settings)
@@ -21,7 +21,7 @@ function New-DocumentAgentConfig {
   $receipts = if ($Settings.receipts) { [string]$Settings.receipts } else { 'sent' }
   $apply = -not $Settings.dry_run
   $config = @{
-    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = $(if ($Settings.ContainsKey("max_sends")) { [int]$Settings.max_sends } else { 200 }); KeepDays = $(if (-not $apply) { 0 } elseif ($Settings.keep_days) { [int]$Settings.keep_days } else { 14 }) } }
+    src = @{ adapter = Join-Path $adapters 'select.ps1'; args = @{ Items = $Settings.items; Receipts = $receipts; MaxSends = $(if ($Settings.ContainsKey("max_sends")) { [int]$Settings.max_sends } else { 1000 }); KeepDays = $(if (-not $apply) { 0 } elseif ($Settings.keep_days) { [int]$Settings.keep_days } else { 14 }) } }
     fmt = @{ adapter = Join-Path $adapters 'fetch.ps1'; args = @{ Path = 'out/documents.json'; Documents = $Settings.documents; Apply = $apply } }
     dst = if ($apply) {
       @{ adapter = Join-Path $adapters 'deliver.ps1'; args = @{ Delivery = $Settings.delivery; Receipts = $receipts } }
