@@ -4,6 +4,8 @@ A [DataAgent](https://github.com/royashbrook/DataAgent) variant for documents. I
 groups them, fetches each group, delivers it once and keeps a receipt. DataAgent still runs the job,
 so the log, cleanup and idle marker are the same as every other DataAgent job.
 
+Requires PowerShell 7.4 or newer and DataAgent 0.7.5.
+
 ```powershell
 Import-Module DocumentAgent   # brings DataAgent, ShipsDocuments and Send-FilesViaEmail with it
 Invoke-DocumentAgent "$PSScriptRoot/settings.json"
@@ -45,6 +47,14 @@ DataAgent config without running it.
   }
 }
 ```
+
+`keepdays` and `purgefiles` control job-file cleanup through DataAgent. By default it uses mtime.
+For cleanup by the date in a filename, set `"filename_date_format": "yyyyMMdd"` (day prefix),
+or also set `"filename_date_pattern": "(?<date>\\d{8})"` to locate that date elsewhere in the name.
+These optional settings pass unchanged to DataAgent and Clear-Files 1.2.0.0. See
+[the filename-date contract](https://github.com/royashbrook/Clear-Files#filename-days-opt-in)
+for matching, cutoff and invalid-setting behavior. This does not change the separate `keep_days`
+receipt policy below.
 
 - **items** returns one row per document. Every row needs `document_id` and `file_name`, plus the
   `key` column that groups them. With `type`, the newest row of each type wins, sorted by `order`
