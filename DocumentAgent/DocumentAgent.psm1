@@ -29,7 +29,7 @@ function New-DocumentAgentConfig {
       @{ adapter = Join-Path $adapters 'skip.ps1'; args = @{} }
     }
   }
-  foreach ($name in 'keepdays', 'purgefiles') { if ($Settings.ContainsKey($name)) { $config[$name] = $Settings[$name] } }
+  foreach ($name in 'keepdays', 'purgefiles', 'filename_date_format', 'filename_date_pattern') { if ($Settings.ContainsKey($name)) { $config[$name] = $Settings[$name] } }
   $config
 }
 
